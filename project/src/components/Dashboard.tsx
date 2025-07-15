@@ -6,7 +6,6 @@ import CallHistory from './CallHistory';
 import IncomingCallModal from './IncomingCallModal';
 import api from '../utils/axios';
 import type { Contact, CallLog, CallStatus } from '../types';
-import { useNavigate } from 'react-router-dom';
 
 const statusMap: Record<string, CallStatus['status']> = {
   queued: 'dialing',
@@ -19,7 +18,6 @@ const statusMap: Record<string, CallStatus['status']> = {
 };
 
 const Dashboard: React.FC = () => {
-  const navigate = useNavigate();
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [callHistory, setCallHistory] = useState<CallLog[]>([]);
   const [callStatus, setCallStatus] = useState<CallStatus>({ isActive: false, status: 'idle' });
@@ -31,14 +29,8 @@ const Dashboard: React.FC = () => {
   const durationInterval = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    const token = localStorage.getItem('access_token');
-    if (!token) {
-      navigate('/login');
-      return;
-    }
-
     api.get<Contact[]>('contacts/')
-      .then((resp: { data: any[]; }) => setContacts(resp.data.map((c: { id: any; name: any; phone: any; email: any; notes: any; lastContacted: any; tags: any; }) => ({
+      .then((resp: { data: any[]; }) => setContacts(resp.data.map(c => ({
         id: c.id,
         name: c.name,
         phone: c.phone,
@@ -47,16 +39,10 @@ const Dashboard: React.FC = () => {
         lastContacted: c.lastContacted,
         tags: c.tags || []
       }))))
-      .catch((error: { response: { status: number; }; }) => {
-        if (error.response?.status === 401) {
-          navigate('/login');
-        } else {
-          console.error('Error fetching contacts', error);
-        }
-      });
+      .catch(console.error);
 
     api.get<{ calls: any[] }>('calls/')
-      .then((resp: { data: { calls: { map: (arg0: (c: any, i: any) => { id: any; contactName: any; phone: any; type: string; duration: number; timestamp: Date; status: any; }) => React.SetStateAction<CallLog[]>; }; }; }) => setCallHistory(resp.data.calls.map((c: { from: any; to: any; direction: string; duration: string; start_time: string | number | Date; status: any; }, i: { toString: () => any; }) => ({
+      .then((resp: { data: { calls: { map: (arg0: (c: any, i: any) => { id: any; contactName: any; phone: any; type: string; duration: number; timestamp: Date; status: any; }) => React.SetStateAction<CallLog[]>; }; }; }) => setCallHistory(resp.data.calls.map((c, i) => ({
         id: i.toString(),
         contactName: c.from || 'Unknown',
         phone: c.to,
@@ -65,14 +51,8 @@ const Dashboard: React.FC = () => {
         timestamp: new Date(c.start_time),
         status: c.status,
       }))))
-      .catch((error: { response: { status: number; }; }) => {
-        if (error.response?.status === 401) {
-          navigate('/login');
-        } else {
-          console.error('Error fetching call logs', error);
-        }
-      });
-  }, [navigate]);
+      .catch(console.error);
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -92,39 +72,28 @@ const Dashboard: React.FC = () => {
       const resp = await api.post('call/', { to: phone });
       const sid = resp.data.sid as string;
 
-      setCallStatus((cs) => ({
+      setCallStatus(cs => ({
         ...cs,
-        currentCall: cs.currentCall ? { ...cs.currentCall, sid } : { phone, contactName: contactName || 'Unknown', startTime: new Date(), duration: 0, sid }
+        currentCall: cs.currentCall && { ...cs.currentCall, sid }
       }));
 
       statusInterval.current = setInterval(async () => {
-        try {
-          const st = await api.get<{ status: string }>(`call/status/?sid=${sid}`);
-          const uiStatus = statusMap[st.data.status] || 'dialing';
-          setCallStatus((cs) => {
-            if (!cs.currentCall) return cs;
-            return { ...cs, status: uiStatus };
-          });
+        const st = await api.get<{ status: string }>(`call/status/?sid=${sid}`);
+        const uiStatus = statusMap[st.data.status] || 'dialing';
+        setCallStatus(cs => ({ ...cs, status: uiStatus }));
 
-          if (uiStatus === 'ended') {
-            if (statusInterval.current) clearInterval(statusInterval.current);
-            const cc = callStatus.currentCall;
-            if (cc) {
-              setCallHistory((ch) => [{
-                id: Date.now().toString(),
-                contactName: cc.contactName,
-                phone: cc.phone,
-                type: 'outgoing',
-                duration: cc.duration,
-                timestamp: new Date(),
-                status: 'completed'
-              }, ...ch]);
-            }
-            setCallStatus({ isActive: false, status: 'idle' });
-          }
-        } catch (err) {
-          console.error('Status check failed', err);
+        if (uiStatus === 'ended') {
           if (statusInterval.current) clearInterval(statusInterval.current);
+          const cc = callStatus.currentCall!;
+          setCallHistory(ch => [{
+            id: Date.now().toString(),
+            contactName: cc.contactName,
+            phone: cc.phone,
+            type: 'outgoing',
+            duration: cc.duration,
+            timestamp: new Date(),
+            status: 'completed'
+          }, ...ch]);
           setCallStatus({ isActive: false, status: 'idle' });
         }
       }, 2000);
@@ -162,15 +131,12 @@ const Dashboard: React.FC = () => {
   const acceptIncomingCall = () => {
     if (incomingCall) {
       incomingCall.accept();
-      setCallStatus((cs) => ({ ...cs, status: 'connected' }));
+      setCallStatus(cs => ({ ...cs, status: 'connected' }));
       durationInterval.current = setInterval(() => {
-        setCallStatus((cs) => {
-          if (!cs.currentCall) return cs;
-          return {
-            ...cs,
-            currentCall: { ...cs.currentCall, duration: Math.floor((Date.now() - cs.currentCall.startTime.getTime()) / 1000) }
-          };
-        });
+        setCallStatus(cs => ({
+          ...cs,
+          currentCall: { ...cs.currentCall!, duration: Math.floor((Date.now() - cs.currentCall!.startTime.getTime()) / 1000) }
+        }));
       }, 1000);
       setIncomingCall(null);
     }
@@ -179,7 +145,7 @@ const Dashboard: React.FC = () => {
   const rejectIncomingCall = () => {
     if (incomingCall) {
       incomingCall.reject();
-      setCallHistory((ch) => [{
+      setCallHistory(ch => [{
         id: Date.now().toString(),
         contactName: 'Incoming Caller',
         phone: incomingCall.from,
@@ -196,13 +162,10 @@ const Dashboard: React.FC = () => {
   useEffect(() => {
     if (callStatus.status === 'connected' && callStatus.currentCall && !durationInterval.current) {
       durationInterval.current = setInterval(() => {
-        setCallStatus((cs) => {
-          if (!cs.currentCall) return cs;
-          return {
-            ...cs,
-            currentCall: { ...cs.currentCall, duration: Math.floor((Date.now() - cs.currentCall.startTime.getTime()) / 1000) }
-          };
-        });
+        setCallStatus(cs => ({
+          ...cs,
+          currentCall: { ...cs.currentCall!, duration: Math.floor((Date.now() - cs.currentCall!.startTime.getTime()) / 1000) }
+        }));
       }, 1000);
     }
     if (callStatus.status === 'ended' && durationInterval.current) {
@@ -213,7 +176,7 @@ const Dashboard: React.FC = () => {
 
   const renderContent = () => {
     if (activeTab === 'contacts') return <ContactTable contacts={contacts} setContacts={setContacts} onCall={handleCall} />;
-    if (activeTab === 'dialer') return <WebDialer callStatus={callStatus} onCall={handleCall} onEndCall={handleEndCall} onIncomingCall={handleIncomingCall} callHistory={callHistory} />;
+    if (activeTab === 'dialer') return <WebDialer callStatus={callStatus} onCall={handleCall} onEndCall={handleEndCall} onIncomingCall={handleIncomingCall} />;
     return <CallHistory callHistory={callHistory} />;
   };
 
@@ -229,7 +192,7 @@ const Dashboard: React.FC = () => {
         <div className="fixed inset-0 bg-black bg-opacity-50 z-50 lg:hidden">
           <div className="w-64 bg-white h-full shadow p-4">
             <button onClick={() => setMobileMenu(false)} className="mb-4"><X /></button>
-            {nav.map((n) => {
+            {nav.map(n => {
               const Icon = n.icon;
               return (
                 <button
@@ -258,7 +221,7 @@ const Dashboard: React.FC = () => {
       <div className="hidden lg:flex lg:w-64 lg:flex-col lg:fixed lg:inset-y-0">
         <div className="bg-white h-full shadow p-4">
           <h1 className="text-2xl font-bold mb-6">SecureDash</h1>
-          {nav.map((n) => {
+          {nav.map(n => {
             const Icon = n.icon;
             return (
               <button

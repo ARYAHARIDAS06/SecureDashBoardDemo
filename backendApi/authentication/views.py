@@ -4,7 +4,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
 from django.contrib.auth import login
-from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework.authtoken.models import Token
 from django.contrib.auth import get_user_model
 from .services import WebAuthnService
 
@@ -29,6 +29,7 @@ def webauthn_register_begin(request):
         options = webauthn_service.generate_registration_options(user)
         print(f"Registration options generated: {json.dumps(options, indent=2)}")
         return Response(options)
+        
     except Exception as e:
         print(f"Register begin error: {str(e)}")
         return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -52,13 +53,13 @@ def webauthn_register_complete(request):
         
         if success:
             login(request, user)
-            refresh = RefreshToken.for_user(user)
-            print(f"Registration successful for user: {user.email}, refresh token: {str(refresh)}")
+            token, _ = Token.objects.get_or_create(user=user)
+            print(f"Registration successful for user: {user.email}, token: {token.key}")
             return Response({
-                'refresh': str(refresh),
-                'access': str(refresh.access_token),
+                'success': True,
+                'token': token.key,
                 'user': {
-                    'id': str(user.id),
+                    'id': user.id,
                     'email': user.email,
                     'username': user.username
                 }
@@ -66,6 +67,7 @@ def webauthn_register_complete(request):
         print("Registration verification failed")
         return Response({'error': 'Registration verification failed'}, 
                        status=status.HTTP_400_BAD_REQUEST)
+        
     except User.DoesNotExist:
         print(f"User not found: {email}")
         return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
@@ -87,6 +89,7 @@ def webauthn_login_begin(request):
         options = webauthn_service.generate_authentication_options(user)
         print(f"Authentication options generated: {json.dumps(options, indent=2)}")
         return Response(options)
+        
     except User.DoesNotExist:
         print(f"User not found: {email}")
         return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
@@ -106,19 +109,19 @@ def webauthn_login_complete(request):
         user = webauthn_service.verify_authentication_response(request._request, credential)
         if user:
             login(request, user)
-            refresh = RefreshToken.for_user(user)
-            print(f"Authentication successful for user: {user.email}, refresh token: {str(refresh)}")
+            token, _ = Token.objects.get_or_create(user=user)
+            print(f"Authentication successful for user: {user.email}, token: {token.key}")
             return Response({
-                'refresh': str(refresh),
-                'access': str(refresh.access_token),
+                'token': token.key,
                 'user': {
-                    'id': str(user.id),
+                    'id': user.id,
                     'email': user.email,
                     'username': user.username
                 }
             })
         print("Authentication verification failed")
         return Response({'error': 'Authentication failed'}, status=status.HTTP_401_UNAUTHORIZED)
+        
     except Exception as e:
         print(f"Login complete error: {str(e)}")
         return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
